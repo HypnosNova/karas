@@ -606,6 +606,10 @@
         e = _m2[4],
         f = _m2[5];
 
+    if (a === 1 && b === 0 && c === 0 && d === 1 && e === 0 && f === 0) {
+      return m;
+    }
+
     var ar = 1;
     var br = 0;
     var cr = 0;
@@ -614,12 +618,32 @@
     var fr = 0; // 先检查a是否为0，强制a为1
 
     if (a === 0) {
-      a = 1;
-      c += 1;
-      e += 1;
-      ar = 2;
-      cr = 1;
-      er = 1;
+      if (b === 1) {
+        var _ref = [b, a, d, c, f, e, br, ar, dr, cr, fr, er];
+        a = _ref[0];
+        b = _ref[1];
+        c = _ref[2];
+        d = _ref[3];
+        e = _ref[4];
+        f = _ref[5];
+        ar = _ref[6];
+        br = _ref[7];
+        cr = _ref[8];
+        dr = _ref[9];
+        er = _ref[10];
+        fr = _ref[11];
+      } else if (b === 0) {
+        return [0, 0, 0, 0, 0, 0];
+      } // R1 + R2/b
+      else {
+          a = 1;
+          c += c / b;
+          e += e / b;
+          ar += ar / b;
+          cr += cr / b;
+          er += er / b;
+          b = 0;
+        }
     } // b/a=x，R2-R1*x，b为0可优化
 
 
@@ -628,23 +652,24 @@
       b = 0;
       d -= c * x;
       f -= e * x;
-      br = -x;
+      br -= ar * x;
       dr -= cr * x;
       fr -= er * x;
-    } // R1/a，a为1可优化
+    } // R1/a，a为0或1可优化
 
 
     if (a !== 1) {
-      a = 1;
       c /= a;
+      e /= a;
       ar /= a;
       cr /= a;
       er /= a;
-    } // c/e=y，R1-R2*y，c为0可优化
+      a = 1;
+    } // c/d=y，R1-R2*y，c为0可优化
 
 
     if (c !== 0) {
-      var y = c / e;
+      var y = c / d;
       c = 0;
       e -= f * y;
       ar -= br * y;
@@ -18202,7 +18227,7 @@
     invalid: invalid
   };
 
-  var version = "0.38.9";
+  var version = "0.38.10";
 
   Geom$2.register('$line', Line);
   Geom$2.register('$polyline', Polyline);
