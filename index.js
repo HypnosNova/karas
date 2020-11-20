@@ -15473,10 +15473,9 @@
 
       _this.__mw = 0; // 记录最大宽高，防止尺寸变化清除不完全
 
-      _this.__mh = 0;
-      _this.__sx = 1; // 默认缩放，css改变canvas/svg缩放后影响事件坐标
+      _this.__mh = 0; // this.__sx = 1; // 默认缩放，css改变canvas/svg缩放后影响事件坐标
+      // this.__sy = 1;
 
-      _this.__sy = 1;
       _this.__task = [];
       _this.__ref = {};
       _this.__animateController = new Controller();
@@ -15540,7 +15539,9 @@
               x2 = _node$getBoundingClie.x,
               y2 = _node$getBoundingClie.y,
               left = _node$getBoundingClie.left,
-              top = _node$getBoundingClie.top;
+              top = _node$getBoundingClie.top,
+              width = _node$getBoundingClie.width,
+              height = _node$getBoundingClie.height;
 
           x = x2 || left || 0;
           y = y2 || top || 0;
@@ -15550,14 +15551,18 @@
               clientY = _ref.clientY;
 
           x = clientX - x;
-          y = clientY - y; // 外边的scale影响元素事件响应，根据倍数计算真实的坐标
+          y = clientY - y; // 外边的scale影响元素事件响应，根据倍数计算真实的坐标，优先手动指定，否则自动计算
 
-          if (__sx !== 1) {
+          if (!isNil$5(__sx)) {
             x /= __sx;
+          } else {
+            x /= width / this.width;
           }
 
-          if (__sy !== 1) {
+          if (!isNil$5(__sy)) {
             y /= __sy;
+          } else {
+            y /= height / this.height;
           }
         }
 
@@ -18227,7 +18232,7 @@
     invalid: invalid
   };
 
-  var version = "0.38.11";
+  var version = "0.38.12";
 
   Geom$2.register('$line', Line);
   Geom$2.register('$polyline', Polyline);
