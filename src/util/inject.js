@@ -1,18 +1,19 @@
 import util from './util';
-import enums from './enums';
+import debug from './debug';
 import textCache from '../node/textCache';
+import font from '../style/font';
+import ca from '../gl/ca';
+import webgl from '../gl/webgl';
 
-const { STYLE_KEY: {
-  FONT_SIZE,
-  FONT_FAMILY,
-  FONT_WEIGHT,
-} } = enums;
 const SPF = 1000 / 60;
 
 const CANVAS = {};
 const WEBGL = {};
 const CANVAS_LIST = [];
 const WEBGL_LIST = [];
+const SUPPORT_OFFSCREEN_CANVAS = typeof OffscreenCanvas === 'function' && util.isFunction(OffscreenCanvas.prototype.getContext);
+
+let defaultFontFamilyData;
 
 function cache(key, width, height, hash, message) {
   let o;
@@ -22,20 +23,18 @@ function cache(key, width, height, hash, message) {
       o = target.pop();
     }
     else {
-      o = document.createElement('canvas');
+      o = !debug.flag && SUPPORT_OFFSCREEN_CANVAS ? new OffscreenCanvas(width, height) : document.createElement('canvas');
     }
   }
   else if(!hash[key]) {
-    o = hash[key] = document.createElement('canvas');
+    o = hash[key] = !debug.flag && SUPPORT_OFFSCREEN_CANVAS ? new OffscreenCanvas(width, height) : document.createElement('canvas');
   }
   else {
     o = hash[key];
   }
-  // o.setAttribute('width', width + 'px');
-  // o.setAttribute('height', height + 'px');
   o.width = width;
   o.height = height;
-  if(typeof karas !== 'undefined' && karas.debug) {
+  if(debug.flag) {
     o.style.width = width + 'px';
     o.style.height = height + 'px';
     o.setAttribute('type', hash === CANVAS ? 'canvas' : 'webgl');
@@ -47,23 +46,31 @@ function cache(key, width, height, hash, message) {
     }
     document.body.appendChild(o);
   }
+  let ctx;
+  if(hash === CANVAS) {
+    ctx = o.getContext('2d');
+  }
+  else {
+    ctx = o.getContext('webgl', ca) || o.getContext('experimental-webgl', ca);
+  }
   return {
     canvas: o,
-    ctx: hash === CANVAS ? o.getContext('2d')
-      : (o.getContext('webgl') || o.getContext('experimental-webgl')),
+    ctx,
     draw() {
       // 空函数，仅对小程序提供hook特殊处理，flush缓冲
     },
+    enabled: true,
     available: true,
     release() {
-      if(hash === CANVAS) {
-        CANVAS_LIST.push(this.canvas);
+      if(!key && this.available) {
+        if(hash === CANVAS) {
+          CANVAS_LIST.push(this.canvas);
+        }
+        else {
+          WEBGL_LIST.push(this.canvas);
+        }
       }
-      else {
-        WEBGL_LIST.push(this.canvas);
-      }
-      this.canvas = null;
-      this.ctx = null;
+      this.available = false;
     },
   };
 }
@@ -86,17 +93,24 @@ let inject = {
     let { list, data } = textCache;
     let html = '';
     let keys = [];
+    let ffs = [];
+    let fss = [];
+    let lengths = [];
     let chars = [];
-    Object.keys(data).forEach(i => {
-      let { key, style, s } = data[i];
+    Object.keys(data).forEach(key => {
+      let { ff, fs, fw, s } = data[key];
       if(s) {
-        let inline = `position:absolute;font-family:${style[FONT_FAMILY]};font-size:${style[FONT_SIZE]}px;font-weight:${style[FONT_WEIGHT]}`;
-        for(let j = 0, len = s.length; j < len; j++) {
-          keys.push(key);
-          let char = s.charAt(j);
+        keys.push(key);
+        ffs.push(ff);
+        fss.push(fs);
+        lengths.push(s.length);
+        let inline = `position:absolute;font-family:${ff};font-size:${fs}px;font-weight:${fw}`;
+        for(let i = 0, len = s.length; i < len; i++) {
+          let char = s.charAt(i);
           chars.push(char);
           html += `<span style="${inline}">${char.replace(/</, '&lt;').replace(' ', '&nbsp;')}</span>`;
         }
+        data[key].s = '';
       }
     });
     if(!html) {
@@ -111,9 +125,16 @@ let inject = {
     div.innerHTML = html;
     let cns = div.childNodes;
     let { charWidth } = textCache;
+    let count = 0, index = 0, key;
     for(let i = 0, len = cns.length; i < len; i++) {
       let node = cns[i];
-      let key = keys[i];
+      if(count === 0) {
+        key = keys[index];
+      }
+      if(++count === lengths[index]) {
+        index++;
+        count = 0;
+      }
       let char = chars[i];
       // clientWidth只返回ceil整数，精度必须用getComputedStyle
       let css = window.getComputedStyle(node, null);
@@ -122,7 +143,24 @@ let inject = {
     list.forEach(text => text.__measureCb());
     textCache.list = [];
     textCache.data = {};
-    document.body.removeChild(div);
+    if(!debug.flag) {
+      document.body.removeChild(div);
+    }
+  },
+  measureTextSync(key, ff, fs, fw, char) {
+    let inline = `position:absolute;font-family:${ff};font-size:${fs}px;font-weight:${fw}`;
+    let html = `<span style="${inline}">${char}</span><span style="${inline}">${char}${char}</span>`;
+    let div = document.createElement('div');
+    div.style.position = 'absolute';
+    div.style.left = '99999px';
+    div.style.top = '-99999px';
+    div.style.visibility = 'hidden';
+    document.body.appendChild(div);
+    div.innerHTML = html;
+    let cns = div.childNodes;
+    let w1 = parseFloat(window.getComputedStyle(cns[0], null).width);
+    let w2 = parseFloat(window.getComputedStyle(cns[1], null).width);
+    return w1 * 2 - w2;
   },
   IMG,
   INIT,
@@ -144,7 +182,7 @@ let inject = {
       return;
     }
     else if(!url || !util.isString(url)) {
-      inject.error('Measure img invalid: ' + url);
+      inject.warn('Measure img invalid: ' + url);
       cb && cb({
         state: LOADED,
         success: false,
@@ -177,7 +215,6 @@ let inject = {
         list.forEach(cb => cb(cache));
       };
       img.onerror = function(e) {
-        inject.error('Measure img failed: ' + url);
         cache.state = LOADED;
         cache.success = false;
         cache.url = url;
@@ -193,7 +230,7 @@ let inject = {
         }
       }
       img.src = url;
-      if(typeof karas !== 'undefined' && karas.debug) {
+      if(debug.flag) {
         document.body.appendChild(img);
       }
     }
@@ -280,11 +317,56 @@ let inject = {
       if(typeof window !== 'undefined' && window.OffscreenCanvas && (o instanceof window.OffscreenCanvas)) {
         return true;
       }
+      // worker
+      if(typeof self !== 'undefined' && self.OffscreenCanvas && (o instanceof self.OffscreenCanvas)) {
+        return true;
+      }
       if(util.isFunction(o.getElementsByTagName)) {
         return true;
       }
     }
     return false;
+  },
+  isWebGLTexture(o) {
+    if(o && typeof WebGLTexture !== 'undefined') {
+      return o instanceof WebGLTexture;
+    }
+  },
+  checkSupportFontFamily(ff) {
+    ff = ff.toLowerCase();
+    // 强制arial兜底
+    if(ff === 'arial') {
+      return true;
+    }
+    if(!font.info.hasOwnProperty(ff)) {
+      return false;
+    }
+    if(font.info[ff].hasOwnProperty('checked')) {
+      return font.info[ff].checked;
+    }
+    let canvas = inject.getCacheCanvas(16, 16, '__$$CHECK_SUPPORT_FONT_FAMILY$$__');
+    let context = canvas.ctx;
+    context.textAlign = 'center';
+    context.fillStyle = '#000';
+    context.textBaseline = 'middle';
+    if(!defaultFontFamilyData) {
+      context.clearRect(0, 0, 16, 16);
+      context.font = '16px arial';
+      context.fillText('a', 8, 8);
+      canvas.draw();
+      defaultFontFamilyData = context.getImageData(0, 0, 16, 16).data;
+    }
+    context.clearRect(0, 0, 16, 16);
+    context.font = '16px ' + ff;
+    context.fillText('a', 8, 8);
+    canvas.draw();
+    let data = context.getImageData(0, 0, 16, 16).data;
+    for(let i = 0, len = data.length; i < len; i++) {
+      if(defaultFontFamilyData[i] !== data[i]) {
+        return font.info[ff].checked = true;
+      }
+    }
+    return font.info[ff].checked = false;
   },
 };
 

@@ -1,13 +1,28 @@
-import util from '../util/util';
 import unit from './unit';
 import reg from './reg';
 import geom from '../math/geom';
 import vector from '../math/vector';
 import mx from '../math/matrix';
+import gradient from '../math/gradient';
+import border from './border';
+import mode from '../node/mode';
+import util from '../util/util';
+import painter from '../util/painter';
+import enums from '../util/enums';
+import inject from '../util/inject';
 
 const { rgba2int, isNil } = util;
-const { PX, PERCENT } = unit;
+const { PX, PERCENT, DEG, NUMBER, REM, VW, VH, calUnit } = unit;
 const { d2r } = geom;
+const { canvasPolygon, svgPolygon } = painter;
+const {
+  STYLE_KEY: {
+    FONT_SIZE,
+  },
+  NODE_KEY: {
+    NODE_DEFS_CACHE,
+  },
+} = enums;
 
 function getLinearDeg(v) {
   let deg = 180;
@@ -45,33 +60,31 @@ function getLinearDeg(v) {
 }
 
 function getRadialPosition(data) {
-  if(/%$/.test(data) || /px$/.test(data) || /^-?[\d.]+$/.test(data)) {
-    return [
-      parseFloat(data),
-      /%/.test(data) ? PERCENT : PX,
-    ];
+  if(/^-?[\d.]/.test(data)) {
+    let v = calUnit(data);
+    if([NUMBER, DEG].indexOf(v[1]) > -1) {
+      v[1] = PX;
+    }
+    return v;
   }
   else {
-    let res = [
+    return [
       {
         top: 0,
         left: 0,
         center: 50,
         right: 100,
         bottom: 100,
-      }[data],
+      }[data] || 50,
       PERCENT,
     ];
-    if(isNil(res[0])) {
-      res[0] = 50;
-    }
-    return res;
   }
 }
 
 // 获取color-stop区间范围，去除无用值
-function getColorStop(v, length) {
+function getColorStop(v, length, root) {
   let list = [];
+  let firstColor = v[0][0];
   // 先把已经声明距离的换算成[0,1]以数组形式存入，未声明的原样存入
   for(let i = 0, len = v.length; i < len; i++) {
     let item = v[i];
@@ -80,6 +93,15 @@ function getColorStop(v, length) {
       let p = item[1];
       if(p[1] === PERCENT) {
         list.push([item[0], p[0] * 0.01]);
+      }
+      else if(p[1] === REM) {
+        list.push([item[0], p[0] * root.computedStyle[FONT_SIZE] / length]);
+      }
+      else if(p[1] === VW) {
+        list.push([item[0], p[0] * root.width / length]);
+      }
+      else if(p[1] === VH) {
+        list.push([item[0], p[0] * root.height / length]);
       }
       else {
         list.push([item[0], p[0] / length]);
@@ -195,6 +217,10 @@ function getColorStop(v, length) {
       item[1] = 1;
     }
   });
+  // 都超限时，第一个颜色兜底
+  if(!list.length) {
+    list.push([firstColor, 0]);
+  }
   return list;
 }
 
@@ -235,8 +261,44 @@ function calLinearCoords(deg, length, cx, cy) {
   return [x0, y0, x1, y1];
 }
 
+function calCircleCentre(position, x1, y1, iw, ih, root) {
+  let cx, cy;
+  let positionX = position[0], positionY = position[1];
+  if(positionX[1] === PERCENT) {
+    cx = x1 + positionX[0] * iw * 0.01;
+  }
+  else if(positionX[1] === REM) {
+    cx = x1 + positionX[0] * root.computedStyle[FONT_SIZE];
+  }
+  else if(positionX[1] === VW) {
+    cx = x1 + positionX[0] * root.width * 0.01;
+  }
+  else if(positionX[1] === VH) {
+    cx = x1 + positionX[0] * root.height * 0.01;
+  }
+  else {
+    cx = x1 + positionX[0];
+  }
+  if(positionY[1] === PERCENT) {
+    cy = y1 + positionY[0] * ih * 0.01;
+  }
+  else if(positionY[1] === REM) {
+    cy = y1 + positionY[0] * root.computedStyle[FONT_SIZE];
+  }
+  else if(positionY[1] === VW) {
+    cy = y1 + positionY[0] * root.width * 0.01;
+  }
+  else if(positionY[1] === VH) {
+    cy = y1 + positionY[0] * root.height * 0.01;
+  }
+  else {
+    cy = y1 + positionY[0];
+  }
+  return [cx, cy];
+}
+
 // 获取径向渐变圆心半径
-function calRadialRadius(shape, size, position, iw, ih, x1, y1, x2, y2) {
+function calRadialRadius(shape, size, position, iw, ih, x1, y1, x2, y2, root) {
   let cx, cy, xl, yl, r, d = 0;
   // 扩展的from to ratio格式，圆心、长轴坐标、短轴缩放比
   if(Array.isArray(size)) {
@@ -270,18 +332,7 @@ function calRadialRadius(shape, size, position, iw, ih, x1, y1, x2, y2) {
   }
   else {
     // 默认椭圆a是水平轴，b是垂直轴
-    if(position[0][1] === PX) {
-      cx = x1 + position[0][0];
-    }
-    else {
-      cx = x1 + position[0][0] * iw * 0.01;
-    }
-    if(position[1][1] === PX) {
-      cy = y1 + position[1][0];
-    }
-    else {
-      cy = y1 + position[1][0] * ih * 0.01;
-    }
+    [cx, cy] = calCircleCentre(position, x1, y1, iw, ih, root);
     let ratio = 1;
     if(size === 'closest-corner' && shape === 'circle') {
       if(cx <= x1 || cx >= x2 || cy <= y1 || cy >= y2) {
@@ -416,7 +467,7 @@ function parseGradient(s) {
           o.z = 'farthest-corner';
         }
       }
-      let position = /at\s+((?:-?[\d.]+(?:px|%)?)|(?:left|top|right|bottom|center))(?:\s+((?:-?[\d.]+(?:px|%)?)|(?:left|top|right|bottom|center)))?/i.exec(gradient[2]);
+      let position = /at\s+((?:-?[\d.]+[pxremvwh%]*)|(?:left|top|right|bottom|center))(?:\s+((?:-?[\d.]+[pxremvwh%]*)|(?:left|top|right|bottom|center)))?/i.exec(gradient[2]);
       if(position) {
         let x = getRadialPosition(position[1]);
         let y = position[2] ? getRadialPosition(position[2]) : x;
@@ -434,7 +485,7 @@ function parseGradient(s) {
       else {
         o.d = 0;
       }
-      let position = /at\s+((?:-?[\d.]+(?:px|%)?)|(?:left|top|right|bottom|center))(?:\s+((?:-?[\d.]+(?:px|%)?)|(?:left|top|right|bottom|center)))?/i.exec(gradient[2]);
+      let position = /at\s+((?:-?[\d.]+[pxremvwh%]*)|(?:left|top|right|bottom|center))(?:\s+((?:-?[\d.]+[pxremvwh%]*)|(?:left|top|right|bottom|center)))?/i.exec(gradient[2]);
       if(position) {
         let x = getRadialPosition(position[1]);
         let y = position[2] ? getRadialPosition(position[2]) : x;
@@ -444,19 +495,17 @@ function parseGradient(s) {
         o.p = [[50, PERCENT], [50, PERCENT]];
       }
     }
-    let v = gradient[2].match(/(-?[\d.]+(px|%))?\s*((#[0-9a-f]{3,8})|(rgba?\s*\(.+?\)))\s*(-?[\d.]+(px|%))?/ig);
+    let v = gradient[2].match(/(-?[\d.]+[pxremvwh%]+)?\s*((#[0-9a-f]{3,8})|(rgba?\s*\(.+?\)))\s*(-?[\d.]+[pxremvwh%]+)?/ig);
     o.v = v.map(item => {
       let color = /((?:#[0-9a-f]{3,8})|(?:rgba?\s*\(.+?\)))/i.exec(item);
       let arr = [rgba2int(color[1])];
-      let percent = /-?[\d.]+(?:px|%)/.exec(item);
+      let percent = /-?[\d.]+[pxremvwh%]+/.exec(item);
       if(percent) {
-        arr[1] = [parseFloat(percent[0])];
-        if(/%$/.test(percent[0])) {
-          arr[1][1] = PERCENT;
+        let v = calUnit(percent[0]);
+        if([NUMBER, DEG].indexOf(v[1]) > -1) {
+          v[1] = PX;
         }
-        else {
-          arr[1][1] = PX;
-        }
+        arr[1] = v;
       }
       return arr;
     });
@@ -464,7 +513,7 @@ function parseGradient(s) {
   }
 }
 
-function getLinear(v, d, ox, oy, cx, cy, w, h) {
+function getLinear(v, d, ox, oy, cx, cy, w, h, root) {
   // d为数组是2个坐标点，数字是css标准角度
   let x1, y1, x2, y2, stop;
   if(Array.isArray(d)) {
@@ -504,7 +553,7 @@ function getLinear(v, d, ox, oy, cx, cy, w, h) {
     y1 = coords[1] + dy * r1;
     x2 = coords[2] - dx * r1;
     y2 = coords[3] - dy * r1;
-    stop = getColorStop(v, total);
+    stop = getColorStop(v, total, root);
   }
   return {
     x1,
@@ -515,10 +564,10 @@ function getLinear(v, d, ox, oy, cx, cy, w, h) {
   };
 }
 
-function getRadial(v, shape, size, position, x1, y1, x2, y2) {
+function getRadial(v, shape, size, position, x1, y1, x2, y2, root) {
   let w = x2 - x1;
   let h = y2 - y1;
-  let [cx, cy, r, xl, yl, d] = calRadialRadius(shape, size, position, w, h, x1, y1, x2, y2);
+  let [cx, cy, r, xl, yl, d] = calRadialRadius(shape, size, position, w, h, x1, y1, x2, y2, root);
   // 圆形取最小值，椭圆根据最小圆进行transform，椭圆其中一边轴和r一样，另一边则大小缩放可能
   let matrix, scx = 1, scy = 1;
   if(xl !== yl || d) {
@@ -539,7 +588,7 @@ function getRadial(v, shape, size, position, x1, y1, x2, y2) {
       matrix = mx.multiply(matrix, m);
     }
   }
-  let stop = getColorStop(v, r);
+  let stop = getColorStop(v, r, root);
   return {
     cx,
     cy,
@@ -552,36 +601,26 @@ function getRadial(v, shape, size, position, x1, y1, x2, y2) {
   };
 }
 
-function getConic(v, d, p, x1, y1, x2, y2, ratio = 1) {
-  let [cx, cy, r, deg] = calConicRadius(v, d, p, x1, y1, x2, y2);
-  let stop = getColorStop(v, 1);
+function getConic(v, d, p, x1, y1, x2, y2, ratio, root) {
+  let [cx, cy, r, deg] = calConicRadius(v, d, p, x1, y1, x2, y2, root);
+  let stop = getColorStop(v, 1, root);
   r <<= 1; // 锥形半径*2，这样分割画圆时保证一定会填满原有矩形
   r *= ratio; // 矢量图形比较特殊，有可能超限，传入个倍数扩大半径
   return {
     cx,
     cy,
+    w: x2 - x1,
+    h: y2 - y1,
     r,
     deg,
     stop,
   };
 }
 
-function calConicRadius(v, deg, position, x1, y1, x2, y2) {
+function calConicRadius(v, deg, position, x1, y1, x2, y2, root) {
   let iw = x2 - x1;
   let ih = y2 - y1;
-  let cx, cy;
-  if(position[0][1] === PX) {
-    cx = x1 + position[0][0];
-  }
-  else {
-    cx = x1 + position[0][0] * iw * 0.01;
-  }
-  if(position[1][1] === PX) {
-    cy = y1 + position[1][0];
-  }
-  else {
-    cy = y1 + position[1][0] * ih * 0.01;
-  }
+  let [cx, cy] = calCircleCentre(position, x1, y1, iw, ih, root);
   let r, a, b;
   if(cx >= x1 + iw * 0.5) {
     a = cx - x1;
@@ -599,9 +638,83 @@ function calConicRadius(v, deg, position, x1, y1, x2, y2) {
   return [cx, cy, r, deg];
 }
 
+function renderConic(xom, renderMode, ctx, res, x, y, w, h, btlr, btrr, bbrr, bblr, isInline) {
+  // border-radius使用三次贝塞尔曲线模拟1/4圆角，误差在[0, 0.000273]之间
+  let list = border.calRadius(x, y, w, h, btlr, btrr, bbrr, bblr);
+  if(!list) {
+    list = [
+      [x, y],
+      [x + w, y],
+      [x + w, y + h],
+      [x, y + h],
+      [x, y],
+    ];
+  }
+  if(renderMode === mode.CANVAS || renderMode === mode.WEBGL) {
+    let offscreen = inject.getCacheCanvas(w, h, '__$$CONIC_GRADIENT$$__');
+    let imgData = offscreen.ctx.getImageData(0,0, w, h);
+    gradient.getConicGradientImage(res.cx - x, res.cy - y, res.w, res.h, res.stop, imgData.data);
+    offscreen.ctx.putImageData(imgData, 0, 0);
+    ctx.save();
+    ctx.beginPath();
+    canvasPolygon(ctx, list);
+    ctx.clip();
+    ctx.closePath();
+    ctx.drawImage(offscreen.canvas, x, y);
+    ctx.restore();
+    offscreen.ctx.clearRect(0, 0, w, h);
+  }
+  else if(renderMode === mode.SVG) {
+    if(isInline) {
+      let v = {
+        tagName: 'symbol',
+        props: [],
+        children: [],
+      };
+      xom.__config[NODE_DEFS_CACHE].push(v);
+      res.forEach(item => {
+        v.children.push({
+          type: 'item',
+          tagName: 'path',
+          props: [
+            ['d', svgPolygon(item[0])],
+            ['fill', item[1]],
+          ],
+        });
+      });
+      return ctx.add(v);
+    }
+    else {
+      let v = {
+        tagName: 'clipPath',
+        children: [{
+          tagName: 'path',
+          props: [
+            ['d', svgPolygon(list)],
+          ],
+        }],
+      };
+      xom.__config[NODE_DEFS_CACHE].push(v);
+      let clip = ctx.add(v);
+      res.forEach(item => {
+        xom.virtualDom.bb.push({
+          type: 'item',
+          tagName: 'path',
+          props: [
+            ['d', svgPolygon(item[0])],
+            ['fill', item[1]],
+            ['clip-path', 'url(#' + clip + ')'],
+          ],
+        });
+      });
+    }
+  }
+}
+
 export default {
   parseGradient,
   getLinear,
   getRadial,
   getConic,
+  renderConic,
 };

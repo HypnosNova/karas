@@ -11,9 +11,14 @@ let fullCssProperty = {
   boxShadow: 'bd',
   overflow: 'of',
   backgroundClip: 'bp',
+  textOverflow: 'tof',
+  flexWrap: 'fp',
 };
 
-let abbrCssProperty = {};
+let abbrCssProperty = {
+  os: 'offset', // 非css属性不会被下面反向遍历插入，手动
+  e: 'easing',
+};
 
 let fullAnimate = {
   value: 'v',

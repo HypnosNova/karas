@@ -100,9 +100,28 @@ function svgLine(x1, y1, x2, y2, controlA, controlB, num) {
   }
 }
 
+function canvasFilter(filter) {
+  let s = '';
+  filter.forEach(item => {
+    let [k, v] = item;
+    if(k === 'blur') {
+      s += `blur(${v}px)`;
+    }
+    else if(k === 'hue-rotate') {
+      s += `hue-rotate(${v}deg)`;
+    }
+    else if(k === 'saturate' || k === 'brightness' || k === 'grayscale' || k === 'contrast') {
+      s += `${k}(${v}%)`;
+    }
+  });
+  return s;
+}
+
 export default {
   canvasPolygon,
   svgPolygon,
   canvasLine,
   svgLine,
+  canvasFilter,
+  svgFilter: canvasFilter,
 };

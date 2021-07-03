@@ -4,13 +4,17 @@ import builder from '../util/builder';
 import Event from '../util/Event';
 import util from '../util/util';
 import inject from '../util/inject';
+import flatten from '../util/flatten';
 import css from '../style/css';
 import change from '../refresh/change';
 
 const { isNil, isFunction, clone, extend } = util;
 
+const REGISTER = {};
+
 /**
  * 向上设置cp类型叶子节点，表明从root到本节点这条链路有更新，使得无链路更新的节约递归
+ * 在check时树递归会用到，判断是否需要查找cp更新
  * @param cp
  */
 function setUpdateFlag(cp) {
@@ -39,7 +43,7 @@ class Component extends Event {
     this.__parent = null;
     this.__host = null;
     this.__ref = {};
-    this.__state = {};
+    this.state = {};
     this.__isMounted = false;
     this.__taskList = [];
   }
@@ -50,7 +54,6 @@ class Component extends Event {
       n = {};
     }
     else if(isFunction(n)) {
-      cb.call(self);
       return;
     }
     else {
@@ -73,6 +76,7 @@ class Component extends Event {
       else {
         self.__nextState = n;
         self.__taskList = [cb];
+        // 回调更新列表，before执行时splice出来供after执行，防止中途产生的后续setState干扰
         let list = [];
         let t = self.__task = {
           __before: () => {
@@ -81,6 +85,7 @@ class Component extends Event {
             setUpdateFlag(this);
           },
           __after: () => {
+            // self.__nextState = null; 由updater.js每次refresh前同步执行清空，这里不能异步清除，否则frame动画会乱序
             list.forEach(cb => {
               if(isFunction(cb)) {
                 cb.call(self);
@@ -93,7 +98,7 @@ class Component extends Event {
     }
     // 构造函数中调用还未render，
     else if(isFunction(cb)) {
-      self.__state = n;
+      self.state = n;
       cb.call(self);
     }
   }
@@ -106,7 +111,7 @@ class Component extends Event {
   __init(json) {
     this.__ref = {};
     let root = this.root;
-    let cd = json || builder.flattenJson(this.render());
+    let cd = json || flatten(this.render());
     let sr = builder.initCp(cd, root, this);
     this.__cd = cd;
     if(sr instanceof Text) {
@@ -118,36 +123,38 @@ class Component extends Event {
       let keys = Object.keys(style);
       extend(sr.style, style, keys);
       extend(sr.currentStyle, style, keys);
-      // 事件添加到sr，以及自定义事件
+      // 事件添加到sr
       Object.keys(this.props).forEach(k => {
         let v = this.props[k];
         if(/^on[a-zA-Z]/.test(k)) {
           k = k.slice(2).toLowerCase();
           sr.listener[k] = v;
         }
-        else if(/^on-[a-zA-Z\d_$]/.test(k)) {
-          k = k.slice(3);
-          this.on(k, v);
-        }
       });
     }
-    else if(sr instanceof Component) {
+    else if(!(sr instanceof Component)) {
       // 本身build是递归的，子cp已经初始化了
-      inject.warn('Component render() return a component: '
-        + this.tagName + ' -> ' + sr.tagName
-        + ', should not inherit style/event');
-    }
-    else {
       throw new Error('Component render() must return a dom/text: ' + this);
     }
-    // shadow指向直接root，shadowRoot考虑到返回Component的递归
+    // 自定义事件无视返回强制添加
+    Object.keys(this.props).forEach(k => {
+      let v = this.props[k];
+      if(/^on-[a-zA-Z\d_$]/.test(k)) {
+        k = k.slice(3);
+        this.on(k, v);
+      }
+    });
+    // shadow指向直接renderRoot，shadowRoot考虑到返回Component的递归即hoc高阶组件
+    // host是直接所属，hostRoot同考虑到高阶组件
     this.__shadow = sr;
     sr.__host = this;
+    // 递归下去，多层级时执行顺序由里到外，最终会被最上层执行替换
     while(sr instanceof Component) {
-      sr = sr.shadowRoot;
+      sr.__hostRoot = this;
+      sr = sr.shadow;
     }
-    sr.__host = this;
     this.__shadowRoot = sr;
+    sr.__hostRoot = this;
     if(!this.__isMounted) {
       this.__isMounted = true;
       let { componentDidMount } = this;
@@ -177,8 +184,6 @@ class Component extends Event {
     if(this.shadowRoot) {
       this.shadowRoot.__destroy();
     }
-    // this.__shadow = null;
-    // this.__shadowRoot = null;
     this.__parent = null;
   }
 
@@ -191,17 +196,6 @@ class Component extends Event {
     if(res) {
       e.target = this;
       return true;
-    }
-  }
-
-  __computeMeasure(renderMode, ctx, isHost, cb) {
-    let sr = this.shadowRoot;
-    if(sr instanceof Text) {
-      sr.__computeMeasure(renderMode, ctx);
-    }
-    // 其它类型为Xom或Component
-    else {
-      sr.__computeMeasure(renderMode, ctx, true, cb);
     }
   }
 
@@ -223,6 +217,10 @@ class Component extends Event {
 
   get host() {
     return this.__host;
+  }
+
+  get hostRoot() {
+    return this.__hostRoot;
   }
 
   get parent() {
@@ -256,6 +254,41 @@ class Component extends Event {
   get isDestroyed() {
     return this.__isDestroyed;
   }
+
+  static get REGISTER() {
+    return REGISTER;
+  }
+
+  static getRegister(name) {
+    if(!name || !util.isString(name) || !/^[A-Z]/.test(name)) {
+      throw new Error('Invalid param');
+    }
+    if(!REGISTER.hasOwnProperty(name)) {
+      throw new Error(`Component has not register: ${name}`);
+    }
+    return REGISTER[name];
+  }
+
+  static register(name, obj) {
+    if(!name || !util.isString(name) || !/^[A-Z]/.test(name)
+      || !obj.prototype || !(obj.prototype instanceof Component)) {
+      throw new Error('Invalid param: Component register');
+    }
+    if(Component.hasRegister(name)) {
+      throw new Error(`Component has already register: ${name}`);
+    }
+    REGISTER[name] = obj;
+  }
+
+  static hasRegister(name) {
+    return name && REGISTER.hasOwnProperty(name);
+  }
+
+  static delRegister(name) {
+    if(Component.hasRegister(name)) {
+      delete REGISTER[name];
+    }
+  }
 }
 
 Object.keys(change.GEOM).concat([
@@ -265,6 +298,18 @@ Object.keys(change.GEOM).concat([
   'oy',
   'sx',
   'sy',
+  // '__sx1',
+  // '__sx2',
+  // '__sx3',
+  // '__sx4',
+  // '__sx5',
+  // '__sx6',
+  // '__sy1',
+  // '__sy2',
+  // '__sy3',
+  // '__sy4',
+  // '__sy5',
+  // '__sy6',
   'width',
   'height',
   'outerWidth',
@@ -295,6 +340,11 @@ Object.keys(change.GEOM).concat([
   'visibilityAnimating',
   'bbox',
   '__config',
+  'contentBoxList',
+  'listener',
+  'matrix',
+  'matrixEvent',
+  'renderMatrix',
 ]).forEach(fn => {
   Object.defineProperty(Component.prototype, fn, {
     get() {
@@ -326,10 +376,16 @@ Object.keys(change.GEOM).concat([
   'getBoundingClientRect',
   'getComputedStyle',
   '__deepScan',
-  '__cancelCache',
+  'clearCache',
   '__structure',
   '__modifyStruct',
   '__updateStruct',
+  'flowChildren',
+  'absChildren',
+  '__isRealInline',
+  '__calBasis',
+  '__calMinMax',
+  '__computeMeasure',
 ].forEach(fn => {
   Component.prototype[fn] = function() {
     let sr = this.shadowRoot;

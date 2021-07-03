@@ -1,6 +1,9 @@
+import Xom from '../node/Xom';
+import Dom from '../node/Dom';
+import Component from '../node/Component';
 import util from './util';
 import inject from './inject';
-import builder from './builder';
+import flatten from './flatten';
 import $$type from './$$type';
 import enums from './enums';
 
@@ -13,8 +16,6 @@ const {
   },
 } = enums;
 const { TYPE_VD, TYPE_GM, TYPE_CP } = $$type;
-
-let Xom, Dom, Img, Geom, Component;
 
 let updateList = [];
 let removeList = [];
@@ -37,10 +38,16 @@ function check(vd) {
       }
     });
   }
+  // 高阶组件会进入此分支，被父组件调用
+  else if(vd instanceof Component && vd.__hasUpdate) {
+    vd.__hasUpdate = false;
+    checkCp(vd, vd.props);
+  }
 }
 
 /**
- * 检查cp是否有state变更
+ * 检查cp是否有state变更，注意递归检查时需要看shadow不能看shadowRoot，
+ * 否则高阶组件会被跳过，其更新无法触发update生命周期
  * @param cp
  * @param nextProps
  * @param forceCheckUpdate，被render()后的json的二级组件，发现props有变更强制检查更新，否则可以跳过
@@ -62,11 +69,11 @@ function checkCp(cp, nextProps, forceCheckUpdate) {
     else {
       cp.props = nextProps;
       cp.state = cp.__nextState || cp.state;
-      check(cp.shadowRoot);
+      check(cp.shadow);
     }
   }
   else {
-    check(cp.shadowRoot);
+    check(cp.shadow);
   }
 }
 
@@ -78,12 +85,12 @@ function checkCp(cp, nextProps, forceCheckUpdate) {
  */
 function updateCp(cp, props, state) {
   cp.props = props;
-  cp.__state = state;
-  cp.__nextState = null;
+  cp.state = state;
+  cp.__nextState = null; // 同步在refresh前清除component的新state标识，这样frame动画在after回调中可以新设
   let oldS = cp.shadow;
   let oldSr = cp.shadowRoot;
   let oldJson = cp.__cd;
-  let json = builder.flattenJson(cp.render());
+  let json = flatten(cp.render());
   // 对比新老render()返回的内容，更新后重新生成sr
   diffSr(oldS, oldJson, json);
   cp.__init(json);
@@ -105,10 +112,6 @@ function updateCp(cp, props, state) {
       '__sy4',
       '__sy5',
       '__sy6',
-      '__bx1',
-      '__by1',
-      '__bx2',
-      '__by2',
       '__computedStyle',
     ].forEach(k => {
       sr[k] = oldSr[k];
@@ -141,6 +144,19 @@ function updateCp(cp, props, state) {
   // 子组件使用老的json时标识，更新后删除，render()返回空会没json对象
   if(json && json.placeholder) {
     delete json.placeholder;
+  }
+  // 高阶组件时需判断，子组件更新后生成新的sr，父组件的sr/host需要同时更新引用
+  let host = cp.host;
+  while(host) {
+    if(host.shadow === cp) {
+      host.__shadowRoot = sr;
+      sr.__hostRoot = host;
+      cp = host;
+      host = host.host;
+    }
+    else {
+      break;
+    }
   }
 }
 
@@ -380,7 +396,7 @@ function getKeyHash(json, hash, vd) {
       if(!util.isNil(key) && key !== '') {
         // 重复key错误警告
         if(hash.hasOwnProperty(key)) {
-          inject.error('Component ' + vd.tagName + ' has duplicate key: ' + key);
+          inject.warn('Component ' + vd.tagName + ' has duplicate key: ' + key);
         }
         hash[key] = {
           json,
@@ -429,15 +445,7 @@ function did() {
 }
 
 export default {
-  ref(o) {
-    Xom = o.Xom;
-    Dom = o.Dom;
-    Img = o.Img;
-    Geom = o.Geom;
-    Component = o.Component;
-  },
   updateList,
   check,
-  checkCp,
   did,
 };

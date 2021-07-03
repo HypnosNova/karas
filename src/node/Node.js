@@ -43,7 +43,7 @@ class Node {
 
   __modifyStruct(root, offset = 0) {
     let struct = this.__config[NODE_STRUCT];
-    return [struct, 1];
+    return [struct, 0];
   }
 
   __offsetX(diff, isLayout) {
@@ -134,6 +134,11 @@ class Node {
   // component根节点
   get host() {
     return this.__host;
+  }
+
+  // 考虑高阶组件在内的component根节点
+  get hostRoot() {
+    return this.__hostRoot;
   }
 
   get baseLine() {

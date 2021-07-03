@@ -1,5 +1,6 @@
 import abbr from './abbr';
 import Node from '../node/Node';
+import Component from '../node/Component';
 import $$type from '../util/$$type';
 import util from '../util/util';
 import inject from '../util/inject';
@@ -48,12 +49,13 @@ function replaceVars(target, vars) {
         }
         let k2 = k.slice(4);
         // 有id且变量里面传入了替换的值，值可为null，因为某些情况下空为自动
-        if(v.id && vars.hasOwnProperty(v.id)) {
+        if(k2 && v.id && vars.hasOwnProperty(v.id)) {
           let value = vars[v.id];
           // undefined和null意义不同
           if(value === undefined) {
             return;
           }
+          let currentTarget = target;
           // 如果有.则特殊处理子属性
           if(k2.indexOf('.') > -1) {
             let list = k2.split('.');
@@ -61,11 +63,12 @@ function replaceVars(target, vars) {
             for(let i = 0; i < len - 1; i++) {
               k2 = list[i];
               // 避免异常
-              if(target[k2]) {
-                target = target[k2];
+              if(currentTarget[k2]) {
+                currentTarget = currentTarget[k2];
               }
               else {
-                inject.error('parseJson vars is not exist: ' + v.id + ', ' + k + ', ' + list.slice(0, i).join('.'));
+                inject.warn('parseJson vars is not exist: ' + v.id + ', ' + k + ', ' + list.slice(0, i).join('.'));
+                return;
               }
             }
             k2 = list[len - 1];
@@ -74,7 +77,36 @@ function replaceVars(target, vars) {
           if(isFunction(value)) {
             value = value(v);
           }
-          target[k2] = value;
+          currentTarget[k2] = value;
+        }
+      }
+    });
+  }
+}
+
+function replaceLibraryVars(target, hash, vars) {
+  if(target && hash && vars) {
+    Object.keys(target).forEach(k => {
+      if(k.indexOf('var-library.') === 0) {
+        let v = target[k];
+        // 直接移除library插槽，防止下面调用replaceVars(target, vars)时报错
+        delete target[k];
+        if(!v) {
+          return;
+        }
+        let k2 = k.slice(12);
+        // 有id且变量里面传入了替换的值
+        if(k2 && v.id && vars.hasOwnProperty(v.id)) {
+          let value = vars[v.id];
+          if(isFunction(value)) {
+            value = value(v);
+          }
+          // 替换图层的值必须是一个有tagName的对象
+          if(!value || !value.tagName) {
+            return;
+          }
+          // library对象也要加上id，与正常的library保持一致
+          hash[k2] = Object.assign({ id: k2 }, value);
         }
       }
     });
@@ -139,7 +171,7 @@ function linkChild(child, libraryItem) {
 }
 
 function parse(karas, json, animateRecords, vars, hash = {}) {
-  if(isPrimitive(json) || json instanceof Node) {
+  if(isPrimitive(json) || json instanceof Node || json instanceof Component) {
     return json;
   }
   if(Array.isArray(json)) {
@@ -167,9 +199,11 @@ function parse(karas, json, animateRecords, vars, hash = {}) {
     library.forEach(item => {
       linkLibrary(item, hash);
     });
+    // 替换library插槽
+    replaceLibraryVars(json, hash, vars);
     json.library = null;
   }
-  let { tagName, props = {}, children = [], animate = [], __animateRecords } = json;
+  let { tagName, props = {}, children = [], animate = [] } = json;
   if(!tagName) {
     throw new Error('Dom must have a tagName: ' + JSON.stringify(json));
   }
@@ -185,6 +219,15 @@ function parse(karas, json, animateRecords, vars, hash = {}) {
   if(tagName.charAt(0) === '$') {
     vd = karas.createGm(tagName, props);
   }
+  else if(/^[A-Z]/.test(tagName)) {
+    let cp = Component.getRegister(tagName);
+    vd = karas.createCp(cp, props, children.map(item => {
+      if(item && [TYPE_VD, TYPE_GM, TYPE_CP].indexOf(item.$$type) > -1) {
+        return item;
+      }
+      return parse(karas, item, animateRecords, vars, hash);
+    }));
+  }
   else {
     vd = karas.createVd(tagName, props, children.map(item => {
       if(item && [TYPE_VD, TYPE_GM, TYPE_CP].indexOf(item.$$type) > -1) {
@@ -192,9 +235,6 @@ function parse(karas, json, animateRecords, vars, hash = {}) {
       }
       return parse(karas, item, animateRecords, vars, hash);
     }));
-  }
-  if(__animateRecords) {
-    vd.__animateRecords = __animateRecords;
   }
   let animationRecord;
   if(animate) {

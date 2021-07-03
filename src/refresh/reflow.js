@@ -39,18 +39,18 @@ function offsetAndResizeByNodeOnY(node, root, reflowHash, dy, inDirectAbsList) {
             if(top[1] === AUTO) {
               if(bottom[1] === AUTO || bottom[1] === PX) {
                 next.__offsetY(dy, true, REFLOW);
-                next.__cancelCache();
+                next.clearCache();
               }
               else if(bottom[1] === PERCENT) {
                 let v = (1 - bottom[0] * 0.01) * dy;
                 next.__offsetY(v, true, REFLOW);
-                next.__cancelCache();
+                next.clearCache();
               }
             }
             else if(top[1] === PERCENT) {
               let v = top[0] * 0.01 * dy;
               next.__offsetY(v, true, REFLOW);
-              next.__cancelCache();
+              next.clearCache();
             }
             // 高度百分比需发生变化的重新布局，需要在容器内
             if(height[1] === PERCENT) {
@@ -77,7 +77,7 @@ function offsetAndResizeByNodeOnY(node, root, reflowHash, dy, inDirectAbsList) {
           }
           else {
             next.__offsetY(dy, true, REFLOW);
-            next.__cancelCache();
+            next.clearCache();
           }
         }
         next = next.next;
@@ -103,7 +103,7 @@ function offsetAndResizeByNodeOnY(node, root, reflowHash, dy, inDirectAbsList) {
       }
       if(need) {
         node.__resizeY(dy, REFLOW);
-        node.__cancelCache();
+        node.clearCache();
       }
       // abs或者高度不需要继续向上调整提前跳出
       else {
@@ -116,12 +116,51 @@ function offsetAndResizeByNodeOnY(node, root, reflowHash, dy, inDirectAbsList) {
     while(true);
     // 最后一个递归向上取消总缓存，防止过程中重复next多次无用递归
     while(last) {
-      last.__cancelCache(true);
+      last.clearCache(true);
       last = last.domParent;
     }
   }
 }
 
+function clearUniqueReflowId(hash) {
+  for(let i in hash) {
+    if(hash.hasOwnProperty(i)) {
+      let { node } = hash[i];
+      delete node.__uniqueReflowId;
+    }
+  }
+}
+
+function getMergeMarginTB(topList, bottomList) {
+  let total = 0;
+  let max = topList[0];
+  let min = topList[0];
+  topList.forEach(item => {
+    total += item;
+    max = Math.max(max, item);
+    min = Math.min(min, item);
+  });
+  bottomList.forEach(item => {
+    total += item;
+    max = Math.max(max, item);
+    min = Math.min(min, item);
+  });
+  // 正数取最大，负数取最小，正负则相加
+  let diff = 0;
+  if(max > 0 && min > 0) {
+    diff = Math.max(max, min) - total;
+  }
+  else if(max < 0 && min < 0) {
+    diff = Math.min(max, min) - total;
+  }
+  else if(max !== 0 || min !== 0) {
+    diff = max + min - total;
+  }
+  return diff;
+}
+
 export default {
   offsetAndResizeByNodeOnY,
+  clearUniqueReflowId,
+  getMergeMarginTB,
 };

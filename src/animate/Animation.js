@@ -15,29 +15,19 @@ const {
   STYLE_KEY: {
     FILTER,
     TRANSFORM_ORIGIN,
-    // BACKGROUND_IMAGE,
+    BACKGROUND_CLIP,
     BACKGROUND_POSITION_X,
     BACKGROUND_POSITION_Y,
     BOX_SHADOW,
     TRANSLATE_X,
     BACKGROUND_SIZE,
-    FONTSIZE,
+    FONT_SIZE,
     FLEX_BASIS,
     FLEX_DIRECTION,
     WIDTH,
     HEIGHT,
-    MARGIN_RIGHT,
-    MARGIN_TOP,
-    MARGIN_LEFT,
-    MARGIN_BOTTOM,
-    PADDING_LEFT,
-    PADDING_BOTTOM,
-    PADDING_RIGHT,
-    PADDING_TOP,
     TOP,
-    RIGHT,
     BOTTOM,
-    LEFT,
     LINE_HEIGHT,
     OPACITY,
     Z_INDEX,
@@ -62,7 +52,7 @@ const {
     FRAME_TRANSITION,
   },
 } = enums;
-const { AUTO, PX, PERCENT, INHERIT, RGBA, STRING, NUMBER } = unit;
+const { AUTO, PX, PERCENT, INHERIT, RGBA, STRING, NUMBER, REM, VW, VH } = unit;
 const { isNil, isFunction, isNumber, isObject, isString, clone, equalArr } = util;
 const { linear } = easing;
 const { cloneStyle } = css;
@@ -197,6 +187,79 @@ function framing(style, duration, es) {
   return res;
 }
 
+function calByUnit(p, n, container, root) {
+  if(p[1] === PX) {
+    if(n[1] === PERCENT) {
+      return n[0] * 0.01 * container - p[0];
+    }
+    else if(n[1] === REM) {
+      return n[0] * root.computedStyle[FONT_SIZE] - p[0];
+    }
+    else if(n[1] === VW) {
+      return n[0] * root.width * 0.01 - p[0];
+    }
+    else if(n[1] === VH) {
+      return n[0] * root.height * 0.01 - p[0];
+    }
+  }
+  else if(p[1] === PERCENT) {
+    if(n[1] === PX) {
+      return n[0] * 100 / container - p[0];
+    }
+    else if(n[1] === REM) {
+      return n[0] * root.computedStyle[FONT_SIZE] * 100 / container - p[0];
+    }
+    else if(n[1] === VW) {
+      return n[0] * root.width / container - p[0];
+    }
+    else if(n[1] === VH) {
+      return n[0] * root.height / container - p[0];
+    }
+  }
+  else if(p[1] === REM) {
+    if(n[1] === PX) {
+      return n[0] / root.computedStyle[FONT_SIZE] - p[0];
+    }
+    else if(n[1] === PERCENT) {
+      return n[0] * 0.01 * container / root.computedStyle[FONT_SIZE] - p[0];
+    }
+    else if(n[1] === VW) {
+      return n[0] * root.width * 0.01 / root.computedStyle[FONT_SIZE] - p[0];
+    }
+    else if(n[1] === VH) {
+      return n[0] * root.height * 0.01 / root.computedStyle[FONT_SIZE] - p[0];
+    }
+  }
+  else if(p[1] === VW) {
+    if(n[1] === PX) {
+      return n[0] * 100 / root.width - p[0];
+    }
+    else if(n[1] === REM) {
+      return n[0] * 100 * root.computedStyle[FONT_SIZE] / root.width - p[0];
+    }
+    else if(n[1] === PERCENT) {
+      return n[0] * container / root.width - p[0];
+    }
+    else if(n[1] === VH) {
+      return n[0] * root.height / root.width - p[0];
+    }
+  }
+  else if(p[1] === VH) {
+    if(n[1] === PX) {
+      return n[0] * 100 / root.height - p[0];
+    }
+    else if(n[1] === REM) {
+      return n[0] * 100 * root.computedStyle[FONT_SIZE] / root.height - p[0];
+    }
+    else if(n[1] === VW) {
+      return n[0] * root.width / root.height - p[0];
+    }
+    else if(n[1] === PERCENT) {
+      return n[0] * container / root.height - p[0];
+    }
+  }
+}
+
 /**
  * 计算两帧之间的差，单位不同的以后面为准，返回的v表示差值
  * 没有变化返回空
@@ -245,16 +308,67 @@ function calDiff(prev, next, k, target, tagName) {
     return res;
   }
   else if(k === FILTER) {
-    // 目前只有1个blur，可以简单处理
-    if(!p || !p.length) {
-      res[1] = n[0][1];
+    // filter很特殊，里面有多个滤镜，忽视顺序按hash计算，为空视为默认值，如blur默认0，brightness默认1
+    let pHash = {}, nHash = {}, keyHash = {};
+    if(p) {
+      p.forEach(item => {
+        keyHash[item[0]] = true;
+        pHash[item[0]] = item[1];
+      });
     }
-    else if(!n || !n.length) {
-      res[1] = -p[0][1];
+    if(n) {
+      n.forEach(item => {
+        keyHash[item[0]] = true;
+        nHash[item[0]] = item[1];
+      })
     }
-    else {
-      res[1] = n[0][1] - p[0][1];
+    let v = {}, hasChange;
+    // 只有blur支持px/rem/vw/vh，其余都是特殊固定单位
+    Object.keys(keyHash).forEach(k => {
+      if(k === 'blur') {
+        if(!pHash[k]) {
+          v[k] = nHash[k].slice(0);
+          hasChange = true;
+        }
+        else if(!nHash[k]) {
+          v[k] = [-pHash[k][0], pHash[k][1]];
+          hasChange = true;
+        }
+        else {
+          let v2 = calByUnit(pHash[k], nHash[k], 0, target.root);
+          v[k] = [v2, pHash[k][1]];
+          hasChange = true;
+        }
+      }
+      else if(k === 'hue-rotate') {
+        let nv = isNil(nHash[k]) ? 0 : nHash[k][0];
+        let pv = isNil(pHash[k]) ? 0 : pHash[k][0];
+        if(pv !== nv) {
+          v[k] = [nv - pv, PERCENT];
+          hasChange = true;
+        }
+      }
+      else if(k === 'saturate' || k === 'brightness' || k === 'contrast') {
+        let nv = isNil(nHash[k]) ? 100 : nHash[k][0];
+        let pv = isNil(pHash[k]) ? 100 : pHash[k][0];
+        if(pv !== nv) {
+          v[k] = [nv - pv, PERCENT];
+          hasChange = true;
+        }
+      }
+      else if(k === 'grayscale') {
+        let nv = isNil(nHash[k]) ? 0 : nHash[k][0];
+        let pv = isNil(pHash[k]) ? 0 : pHash[k][0];
+        if(pv !== nv) {
+          v[k] = [nv - pv, PERCENT];
+          hasChange = true;
+        }
+      }
+    });
+    if(!hasChange) {
+      return;
     }
+    res[1] = v;
   }
   else if(k === TRANSFORM_ORIGIN) {
     res[1] = [];
@@ -264,13 +378,9 @@ function calDiff(prev, next, k, target, tagName) {
       if(pi[1] === ni[1]) {
         res[1].push(ni[0] - pi[0]);
       }
-      else if(pi[1] === PX && ni[1] === PERCENT) {
-        let v = ni[0] * 0.01 * target[i ? 'outerHeight' : 'outerWidth'];
-        res[1].push(v - pi[0]);
-      }
-      else if(pi[1] === PERCENT && ni[1] === PX) {
-        let v = ni[0] * 100 / target[i ? 'outerHeight' : 'outerWidth'];
-        res[1].push(v - pi[0]);
+      else {
+        let v = calByUnit(pi, ni, target[i ? 'outerHeight' : 'outerWidth'], target.root);
+        res[1].push(v || 0);
       }
     }
     if(equalArr(res[1], [0, 0])) {
@@ -286,31 +396,28 @@ function calDiff(prev, next, k, target, tagName) {
         res[1].push(null);
         continue;
       }
-      if(pi[1] === ni[1] && [PX, PERCENT].indexOf(pi[1]) > -1) {
+      if(pi[1] === ni[1]) {
         let v = ni[0] - pi[0];
-        if(v === 0) {
-          return;
-        }
-        res[1].push(v);
-      }
-      else if(p[1] === PX && n[1] === PERCENT) {
-        let v = ni[0] * 0.01 * target[k === BACKGROUND_POSITION_X ? 'clientWidth' : 'clientHeight'];
-        v = v - pi[0];
-        if(v === 0) {
-          return;
-        }
-        res[1].push(v);
-      }
-      else if(p[1] === PERCENT && n[1] === PX) {
-        let v = ni[0] * 100 / target[k === BACKGROUND_POSITION_X ? 'clientWidth' : 'clientHeight'];
-        v = v - pi[0];
-        if(v === 0) {
+        if(!v) {
+          res[1].push(null);
           return;
         }
         res[1].push(v);
       }
       else {
-        res[1].push(null);
+        let k2 = k === BACKGROUND_POSITION_X ? 'offsetWidth' : 'offsetHeight';
+        if(['padding-box', 'paddingBox'].indexOf(target.computedStyle[BACKGROUND_CLIP]) > -1) {
+          k2 = k === BACKGROUND_POSITION_X ? 'clientWidth' : 'clientHeight';
+        }
+        else if(['content-box', 'contentBox'].indexOf(target.computedStyle[BACKGROUND_CLIP]) > -1) {
+          k2 = k === BACKGROUND_POSITION_X ? 'width' : 'height';
+        }
+        let v = calByUnit(pi, ni, target[k2], target.root);
+        if(!v) {
+          res[1].push(null);
+          return;
+        }
+        res[1].push(v);
       }
     }
   }
@@ -341,18 +448,9 @@ function calDiff(prev, next, k, target, tagName) {
       }
       res[1] = v;
     }
-    else if(p[1] === PX && n[1] === PERCENT) {
-      let v = n[0] * 0.01 * target[(k === TRANSLATE_X) ? 'outerWidth' : 'outerHeight'];
-      v = v - p[0];
-      if(v === 0) {
-        return;
-      }
-      res[1] = v;
-    }
-    else if(p[1] === PERCENT && n[1] === PX) {
-      let v = n[0] * 100 / target[(k === TRANSLATE_X) ? 'outerWidth' : 'outerHeight'];
-      v = v - p[0];
-      if(v === 0) {
+    else {
+      let v = calByUnit(p, n, target[k === TRANSLATE_X ? 'outerWidth' : 'outerHeight'], target.root);
+      if(!v) {
         return;
       }
       res[1] = v;
@@ -371,20 +469,19 @@ function calDiff(prev, next, k, target, tagName) {
       let temp = [];
       for(let j = 0; j < 2; j++) {
         let pp = pi[j], nn = ni[j];
-        if(pp[1] === nn[1] && [PX, PERCENT].indexOf(pp[1]) > -1) {
+        if(pp[1] === nn[1]) {
           temp.push(nn[0] - pp[0]);
         }
-        else if(pp[1] === PX && nn[1] === PERCENT) {
-          let v = nn[0] * 0.01 * target[i ? 'clientWidth' : 'clientHeight'];
-          temp.push(v - pp[0]);
-        }
-        else if(pp[1] === PERCENT && nn[1] === PX) {
-          let v = nn[0] * 100 / target[i ? 'clientWidth' : 'clientHeight'];
-          temp.push(v - pp[0]);
-        }
-        // 兜底异常情况
         else {
-          temp.push(0);
+          let k2 = i ? 'offsetWidth' : 'offsetHeight';
+          if(['padding-box', 'paddingBox'].indexOf(target.computedStyle[BACKGROUND_CLIP]) > -1) {
+            k2 = i ? 'clientWidth' : 'clientHeight';
+          }
+          else if(['content-box', 'contentBox'].indexOf(target.computedStyle[BACKGROUND_CLIP]) > -1) {
+            k2 = i ? 'width' : 'height';
+          }
+          let v = calByUnit(pp, nn, target[k2], target.root);
+          temp.push(v || 0);
         }
       }
       if(equalArr(temp, [0, 0])) {
@@ -435,11 +532,9 @@ function calDiff(prev, next, k, target, tagName) {
             if(a[1][1] === b[1][1]) {
               t.push(b[1][0] - a[1][0]);
             }
-            else if(a[1][1] === PX && b[1][1] === PERCENT) {
-              t.push(b[1][0] * clientWidth * 0.01 - a[1][0]);
-            }
-            else if(a[1][1] === PERCENT && b[1][1] === PX) {
-              t.push(b[1][0] * 100 / clientWidth - a[1][0]);
+            else {
+              let v = calByUnit(a[1], b[1], clientWidth, target.root);
+              t.push(v || 0);
             }
           }
           temp[0].push(t);
@@ -503,13 +598,9 @@ function calDiff(prev, next, k, target, tagName) {
               if(pp[1] === np[1]) {
                 temp[2].push(np[0] - pp[0]);
               }
-              else if(pp[1] === PX && np[1] === PERCENT) {
-                let v = np[0] * 0.01 * target[i ? 'clientWidth' : 'clientHeight'];
-                temp[2].push(v - pp[0]);
-              }
-              else if(pp[1] === PERCENT && np[1] === PX) {
-                let v = np[0] * 100 / target[i ? 'clientWidth' : 'clientHeight'];
-                temp[2].push(v - pp[0]);
+              else {
+                let v = calByUnit(pp, np, target[i ? 'clientWidth' : 'clientHeight'], target.root);
+                temp[2].push(v || 0);
               }
             }
             if(eq && equalArr(res[3], [0, 0])) {
@@ -526,13 +617,9 @@ function calDiff(prev, next, k, target, tagName) {
             if(pp[1] === np[1]) {
               temp[2].push(np[0] - pp[0]);
             }
-            else if(pp[1] === PX && np[1] === PERCENT) {
-              let v = np[0] * 0.01 * target[i ? 'clientWidth' : 'clientHeight'];
-              temp[2].push(v - pp[0]);
-            }
-            else if(pp[1] === PERCENT && np[1] === PX) {
-              let v = np[0] * 100 / target[i ? 'clientWidth' : 'clientHeight'];
-              temp[2].push(v - pp[0]);
+            else {
+              let v = calByUnit(pp, np, target[i ? 'clientWidth' : 'clientHeight'], target.root);
+              temp[2].push(v || 0);
             }
           }
           if(eq && res[2] !== 0 && equalArr(res[3], [0, 0])) {
@@ -579,14 +666,9 @@ function calDiff(prev, next, k, target, tagName) {
       if(n[i][1] === p[i][1]) {
         res[1].push(n[i][0] - p[i][0]);
       }
-      else if(p[i][1] === PX && n[i][1] === PERCENT) {
-        res[1].push(n[i][0] * 0.01 * target[i ? 'outerHeight' : 'outerWidth'] - p[i][0]);
-      }
-      else if(p[i][1] === PERCENT && n[i][1] === PX) {
-        res[1].push(n[i][0] * 100 / target[i ? 'outerHeight' : 'outerWidth'] - p[i][0]);
-      }
       else {
-        res[1].push(0);
+        let v = calByUnit(p[i], n[i], target[i ? 'outerHeight' : 'outerWidth'], target.root);
+        res[1].push(v || 0);
       }
     }
   }
@@ -601,44 +683,26 @@ function calDiff(prev, next, k, target, tagName) {
     if(p[1] === n[1]) {
       diff = n[0] - p[0];
     }
-    // 长度单位变化特殊计算，根据父元素computedStyle
-    else if(p[1] === PX && n[1] === PERCENT) {
-      let v;
-      if(k === FONTSIZE) {
-        v = n[0] * parentComputedStyle[k] * 0.01;
-      }
-      else if(k === FLEX_BASIS && computedStyle[FLEX_DIRECTION] === 'row' || k === WIDTH
-        || [LEFT, RIGHT, MARGIN_BOTTOM, MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT,
-          PADDING_TOP, PADDING_RIGHT, PADDING_BOTTOM, PADDING_LEFT].indexOf(k) > -1) {
-        v = n[0] * parentComputedStyle[WIDTH] * 0.01;
-      }
-      else if(k === FLEX_BASIS || k === HEIGHT || [TOP, BOTTOM].indexOf(k) > -1) {
-        v = n[0] * parentComputedStyle[HEIGHT] * 0.01;
-      }
-      diff = v - p[0];
-    }
-    else if(p[1] === PERCENT && n[1] === PX) {
-      let v;
-      if(k === FONTSIZE) {
-        v = n[0] * 100 / parentComputedStyle[k];
-      }
-      else if(k === FLEX_BASIS && computedStyle[FLEX_DIRECTION] === 'row' || k === WIDTH
-        || [LEFT, RIGHT, MARGIN_BOTTOM, MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT,
-          PADDING_TOP, PADDING_RIGHT, PADDING_BOTTOM, PADDING_LEFT].indexOf(k) > -1) {
-        v = n[0] * 100 / parentComputedStyle[WIDTH];
-      }
-      else if(k === FLEX_BASIS || k === HEIGHT || [TOP, BOTTOM].indexOf(k) > -1) {
-        v = n[0] * 100 / parentComputedStyle[HEIGHT];
-      }
-      diff = v - p[0];
-    }
-    // lineHeight奇怪的单位变化
+    // lineHeight奇怪的单位变化，%相对于fontSize
     else if(k === LINE_HEIGHT) {
-      if(p[1] === PX && n[1] === NUMBER) {
-        diff = n[0] * computedStyle[FONTSIZE] - p[0];
+      diff = calByUnit(p, n, computedStyle[FONT_SIZE], target.root);
+    }
+    // fontSize的%相对于parent的
+    else if(k === FONT_SIZE) {
+      diff = calByUnit(p, n, parentComputedStyle[FONT_SIZE], target.root);
+    }
+    // 相对于父height的特殊属性
+    else if(k === FLEX_BASIS
+      && ['column', 'column-reverse', 'columnReverse'].indexOf(computedStyle[FLEX_DIRECTION]) > -1
+      || [HEIGHT, TOP, BOTTOM].indexOf(k) > -1) {
+      if(p[1] !== AUTO && n[1] !== AUTO) {
+        diff = calByUnit(p, n, parentComputedStyle[HEIGHT], target.root);
       }
-      else if(p[1] === NUMBER && n[1] === PX) {
-        diff = n[0] / computedStyle[FONTSIZE] - p[0];
+    }
+    // 其余都是相对于父width的
+    else {
+      if(p[1] !== AUTO && n[1] !== AUTO) {
+        diff = calByUnit(p, n, parentComputedStyle[WIDTH], target.root);
       }
     }
     // 兜底NaN非法
@@ -839,11 +903,7 @@ function binarySearch(i, j, time, frames) {
 function getEasing(ea) {
   let timingFunction;
   if(ea) {
-    if(/^\s*(?:cubic-bezier\s*)?\(\s*[\d.]+\s*,\s*[-\d.]+\s*,\s*[\d.]+\s*,\s*[-\d.]+\s*\)\s*$/i.test(ea)) {
-      let v = ea.match(/[\d.]+/g);
-      timingFunction = easing.cubicBezier(v[0], v[1], v[2], v[3]);
-    }
-    else if((timingFunction = /^\s*steps\s*\(\s*(\d+)(?:\s*,\s*(\w+))?\s*\)/i.exec(ea))) {
+    if((timingFunction = /^\s*steps\s*\(\s*(\d+)(?:\s*,\s*(\w+))?\s*\)/i.exec(ea))) {
       let steps = parseInt(timingFunction[1]);
       let stepsD = timingFunction[2];
       timingFunction = function(percent) {
@@ -857,7 +917,7 @@ function getEasing(ea) {
       };
     }
     else {
-      timingFunction = easing[ea];
+      timingFunction = easing.getEasing(ea);
     }
   }
   return timingFunction;
@@ -898,11 +958,34 @@ function calIntermediateStyle(frame, keys, percent, target) {
       }
     }
     else if(k === FILTER) {
-      // 只有1个样式声明了filter另外一个为空
+      // 只有1个样式声明了filter另外一个为空，会造成无样式，需初始化数组并在下面计算出样式存入
       if(!st) {
-        st = style[k] = [['blur', 0]];
+        st = style[k] = [];
       }
-      st[0][1] += v * percent;
+      // 将已有的样式按key存入引用来操作
+      let hash = {};
+      st.forEach(item => {
+        hash[item[0]] = item[1];
+      });
+      Object.keys(v).forEach(k => {
+        if(hash.hasOwnProperty(k)) {
+          hash[k][0] += v[k][0] * percent;
+        }
+        else {
+          // 2个关键帧中有1个未声明，需新建样式存入
+          if(k === 'blur' || k === 'hue-rotate' || k === 'grayscale') {
+            let n = v[k].slice(0);
+            n[0] *= percent;
+            st.push([k, n]);
+          }
+          // 默认值是1而非0
+          else if(k === 'saturate' || k === 'brightness' || k === 'contrast') {
+            let n = v[k].slice(0);
+            n[0] = 100 + n[0] * percent;
+            st.push([k, n]);
+          }
+        }
+      });
     }
     else if(RADIUS_HASH.hasOwnProperty(k)) {
       for(let i = 0; i < 2; i++) {
@@ -1266,6 +1349,10 @@ class Animation extends Event {
     this.fill = op.fill;
     this.iterations = op.iterations;
     this.direction = op.direction;
+    config[I_CURRENT_FRAMES] = {
+      reverse: true,
+      'alternate-reverse': true,
+    }.hasOwnProperty(op.direction) ? framesR : frames;
   }
 
   __init(list, iterations, duration, easing, target) {
@@ -1296,6 +1383,7 @@ class Animation extends Event {
           continue;
         }
       }
+      // 缩写处理
       Object.keys(current).forEach(k => {
         if(abbr.hasOwnProperty(k)) {
           abbr.toFull(current, k);
@@ -1380,6 +1468,7 @@ class Animation extends Event {
     // 为方便两帧之间计算变化，强制统一所有帧的css属性相同，没有写的为节点的当前样式currentStyle
     let keys = unify(frames, target);
     inherit(frames, keys, target);
+    let framesR = clone(frames).reverse();
     // 存储原本样式以便恢复用
     let { style, props } = target;
     let originStyle = {};
@@ -1397,7 +1486,6 @@ class Animation extends Event {
       prev = calFrame(prev, next, keys, target, tagName);
     }
     // 反向存储帧的倒排结果
-    let framesR = clone(frames).reverse();
     framesR.forEach(item => {
       item[FRAME_TIME] = duration - item[FRAME_TIME];
       item[FRAME_TRANSITION] = [];
@@ -1559,11 +1647,7 @@ class Animation extends Event {
     }
     __config[I_FIRST_ENTER] = false;
     // delay仅第一次生效
-    if(playCount > 0) {
-      // delay = 0;
-    }
-    // 还没过前置delay
-    else if(currentTime < delay) {
+    if(playCount === 0 && currentTime < delay) {
       if(stayBegin) {
         let currentFrame = __config[I_CURRENT_FRAME] = currentFrames[0];
         let current = currentFrame[FRAME_STYLE];
@@ -1574,7 +1658,7 @@ class Animation extends Event {
       __config[I_IS_DELAY] = true;
       return;
     }
-    // 减去delay，计算在哪一帧，仅第一次生效
+    // 减去delay，计算在哪一帧，仅首轮
     if(playCount === 0) {
       currentTime -= delay;
     }
@@ -1633,6 +1717,10 @@ class Animation extends Event {
       }
       // 非尾每轮次放完增加次数和计算下轮准备
       if(!isLastCount) {
+        // 首轮特殊减去delay
+        if(playCount === 0 && delay) {
+          __config[I_NEXT_TIME] -= delay;
+        }
         // duration特别短的情况循环减去
         while(__config[I_NEXT_TIME] >= duration) {
           __config[I_NEXT_TIME] -= duration;
@@ -1905,13 +1993,32 @@ class Animation extends Event {
     if(excludeDelay) {
       v += __config[I_DELAY];
     }
+    v -= __config[I_DELAY];
     // 超过时间长度需要累加次数
+    __config[I_PLAY_COUNT] = 0;
     while(v > duration && __config[I_PLAY_COUNT] < __config[I_ITERATIONS] - 1) {
       __config[I_PLAY_COUNT]++;
       v -= duration;
     }
     // 在时间范围内设置好时间，复用play直接跳到播放点
     __config[I_NEXT_TIME] = v;
+    // 防止play()重置时间和当前帧组，提前计算好
+    __config[I_ENTER_FRAME] = true;
+    let frames = __config[I_FRAMES];
+    let framesR = __config[I_FRAMES_R];
+    let direction = __config[I_DIRECTION];
+    if({
+      alternate: true,
+      'alternate-reverse': true,
+    }.hasOwnProperty(direction)) {
+      let isEven = __config[I_PLAY_COUNT] % 2 === 0;
+      if(direction === 'alternate') {
+        __config[I_CURRENT_FRAMES] = isEven ? frames : framesR;
+      }
+      else {
+        __config[I_CURRENT_FRAMES] = isEven ? framesR : frames;
+      }
+    }
     return v;
   }
 

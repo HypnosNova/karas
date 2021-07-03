@@ -22,6 +22,7 @@ import builder from './util/builder';
 import updater from './util/updater';
 import inject from './util/inject';
 import enums from './util/enums';
+import debug from './util/debug';
 import parser from './parser/index';
 import style from './style/index';
 import animate from './animate/index';
@@ -67,7 +68,7 @@ let karas = {
     }
   },
   createVd(tagName, props, children = []) {
-    if(['canvas', 'svg'].indexOf(tagName) > -1) {
+    if(['canvas', 'svg', 'webgl'].indexOf(tagName) > -1) {
       return new Root(tagName, props, children);
     }
     if(tag.TAG_NAME.hasOwnProperty(tagName)) {
@@ -118,6 +119,9 @@ let karas = {
   updater,
   refresh,
   enums,
+  set debug(v) {
+    debug.flag = !!v;
+  },
 };
 
 builder.ref({
@@ -127,16 +131,12 @@ builder.ref({
   Geom,
   Component,
 });
-updater.ref({
-  Xom,
-  Dom,
-  Img,
-  Geom,
-  Component,
-});
 
 if(typeof window !== 'undefined') {
   window.karas = karas;
+}
+else if(typeof self !== 'undefined') {
+  self.karas = karas;
 }
 
 export default karas;

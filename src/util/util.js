@@ -1,8 +1,5 @@
 import $$type from './$$type';
 import mx from '../math/matrix';
-import enums from './enums';
-
-const { STYLE_KEY, STYLE_KEY: { TRANSFORM } } = enums;
 
 let toString = {}.toString;
 function isType(type) {
@@ -17,6 +14,10 @@ let isFunction = isType('Function');
 let isNumber = isType('Number');
 let isBoolean = isType('Boolean');
 let isDate = isType('Date');
+
+let hasOwn = {}.hasOwnProperty;
+let fnToString = hasOwn.toString;
+let ObjectFunctionString = fnToString.call(Object);
 
 function isNil(v) {
   return v === undefined || v === null;
@@ -119,8 +120,11 @@ function joinVd(vd) {
       + ' visibility="' + visibility + '"'
       + (mask ? (' mask="' + mask + '"') : '')
       + (overflow ? (' clip-path="' + overflow + '"') : '')
-      + (filter ? (' filter="' + filter + '"') : '')
-      + (mixBlendMode ? (' style="mix-blend-mode:' + mixBlendMode + '"') : '')
+      // + (filter ? (' filter="' + filter + '"') : '')
+      + ((filter || mixBlendMode) ? ' style="' : '')
+      + (filter ? ('filter:' + filter + ';') : '')
+      + (mixBlendMode ? ('mix-blend-mode:' + mixBlendMode + ';') : '')
+      + ((filter || mixBlendMode) ? '"' : '')
       + '>' + s + '</g>';
   }
 }
@@ -279,6 +283,9 @@ function clone(obj) {
   if(util.isDate(obj)) {
     return new Date(obj);
   }
+  if(!isPlainObject(obj) && !Array.isArray(obj)) {
+    return obj;
+  }
   let n = Array.isArray(obj) ? [] : {};
   Object.keys(obj).forEach(i => {
     n[i] = clone(obj[i]);
@@ -422,7 +429,7 @@ function transformBbox(bbox, matrix, dx = 0, dy = 0) {
       let x = list[i], y = list[i + 1];
       [x, y] = mx.calPoint([x, y], matrix);
       xa = Math.min(xa, x);
-      xb = Math.max(xa, x);
+      xb = Math.max(xb, x);
       ya = Math.min(ya, y);
       yb = Math.max(yb, y);
     }
@@ -437,103 +444,16 @@ function transformBbox(bbox, matrix, dx = 0, dy = 0) {
   return bbox;
 }
 
-const VALUE = {
-  [STYLE_KEY.POSITION]: true,
-  [STYLE_KEY.DISPLAY]: true,
-  [STYLE_KEY.BACKGROUND_REPEAT]: true,
-  [STYLE_KEY.FLEX_DIRECTION]: true,
-  [STYLE_KEY.JUSTIFY_CONTENT]: true,
-  [STYLE_KEY.ALIGN_ITEMS]: true,
-  [STYLE_KEY.ALIGN_SELF]: true,
-  [STYLE_KEY.OVERFLOW]: true,
-  [STYLE_KEY.MIX_BLEND_MODE]: true,
-  [STYLE_KEY.STROKE_LINECAP]: true,
-  [STYLE_KEY.STROKE_LINEJOIN]: true,
-  [STYLE_KEY.STROKE_MITERLIMIT]: true,
-  [STYLE_KEY.FILL_RULE]: true,
-};
-const ARRAY_0 = {
-  [STYLE_KEY.BACKGROUND_SIZE]: true,
-  [STYLE_KEY.BACKGROUND_COLOR]: true,
-  [STYLE_KEY.BORDER_TOP_COLOR]: true,
-  [STYLE_KEY.BORDER_RIGHT_COLOR]: true,
-  [STYLE_KEY.BORDER_BOTTOM_COLOR]: true,
-  [STYLE_KEY.BORDER_LEFT_COLOR]: true,
-};
-const ARRAY_0_1 = {
-  [STYLE_KEY.BORDER_TOP_LEFT_RADIUS]: true,
-  [STYLE_KEY.BORDER_TOP_RIGHT_RADIUS]: true,
-  [STYLE_KEY.BORDER_BOTTOM_RIGHT_RADIUS]: true,
-  [STYLE_KEY.BORDER_BOTTOM_LEFT_RADIUS]: true,
-  [STYLE_KEY.TRANSFORM_ORIGIN]: true,
-};
-function cloneStyle(style, keys) {
-  if(!keys) {
-    keys = Object.keys(style);
+function isPlainObject(obj) {
+  if(!obj || toString.call( obj ) !== '[object Object]') {
+    return false;
   }
-  let res = {};
-  keys.forEach(k => {
-    let v = style[k];
-    // 渐变特殊处理
-    if(k === STYLE_KEY.BACKGROUND_IMAGE) {
-      if(v.k) {
-        res[k] = util.clone(v);
-      }
-      else {
-        res[k] = v;
-      }
-    }
-    // position等直接值类型赋值
-    else if(VALUE.hasOwnProperty(k)) {
-      res[k] = v;
-    }
-    // 其余皆是数组
-    else {
-      let n = res[k] = v.slice(0);
-      // 特殊引用里数组某项再次clone
-      if(ARRAY_0.hasOwnProperty(k)) {
-        n[0] = n[0].slice(0);
-      }
-      else if(ARRAY_0_1.hasOwnProperty(k)) {
-        n[0] = n[0].slice(0);
-        n[1] = n[1].slice(0);
-      }
-      else if(k === TRANSFORM) {
-        for(let i = 0, len = n.length; i < len; i++) {
-          n[i] = n[i].slice(0);
-        }
-      }
-    }
-  });
-  return res;
-}
-
-function getMergeMarginTB(topList, bottomList) {
-  let total = 0;
-  let max = topList[0];
-  let min = topList[0];
-  topList.forEach(item => {
-    total += item;
-    max = Math.max(max, item);
-    min = Math.min(min, item);
-  });
-  bottomList.forEach(item => {
-    total += item;
-    max = Math.max(max, item);
-    min = Math.min(min, item);
-  });
-  // 正数取最大，负数取最小，正负则相加
-  let diff = 0;
-  if(max > 0 && min > 0) {
-    diff = Math.max(max, min) - total;
+  let proto = Object.getPrototypeOf(obj);
+  if(!proto) {
+    return true;
   }
-  else if(max < 0 && min < 0) {
-    diff = Math.min(max, min) - total;
-  }
-  else if(max !== 0 || min !== 0) {
-    diff = max + min - total;
-  }
-  return diff;
+  let Ctor = hasOwn.call(proto, 'constructor') && proto.constructor;
+  return typeof Ctor === 'function' && fnToString.call(Ctor) === ObjectFunctionString;
 }
 
 let util = {
@@ -551,6 +471,7 @@ let util = {
   isAuto(v) {
     return isNil(v) || v === 'auto';
   },
+  isPlainObject,
   stringify,
   joinSourceArray(arr) {
     return joinSourceArray(arr);
@@ -565,14 +486,12 @@ let util = {
   arr2hash,
   hash2arr,
   clone,
-  cloneStyle,
   equalArr,
   equal,
   extend,
   joinArr,
   extendAnimate,
   transformBbox,
-  getMergeMarginTB,
 };
 
 export default util;

@@ -22,6 +22,9 @@ animation.on('frame', () => {
   if(n === 1) {
     input.value = t.getComputedStyle().filter;
   }
+  else if(n === 2) {
+    input.value += '/' + (t.getComputedStyle().filter[0][1] > 0);
+  }
 });
 animation.on('finish', () => {
   input.value += '/' + t.getComputedStyle().filter;

@@ -2,14 +2,22 @@ import Text from '../node/Text';
 import util from './util';
 import $$type from './$$type';
 import enums from './enums';
+import flatten from './flatten';
 
-const { NODE_KEY: { NODE_DOM_PARENT } } = enums;
+const { NODE_KEY: {
+  NODE_DOM_PARENT,
+  NODE_STYLE,
+  NODE_CURRENT_STYLE,
+  NODE_COMPUTED_STYLE,
+  NODE_MATRIX,
+  NODE_MATRIX_EVENT,
+} } = enums;
 const { TYPE_VD, TYPE_GM, TYPE_CP } = $$type;
 
 let Xom, Dom, Img, Geom, Component;
 
 function initRoot(cd, root) {
-  let c = flattenJson({
+  let c = flatten({
     children: cd,
     $$type: TYPE_VD,
   });
@@ -122,57 +130,6 @@ function build(json, root, owner, host, hasP) {
 }
 
 /**
- * 2. 打平children中的数组，变成一维
- * 3. 合并相连的Text节点，即string内容
- */
-function flattenJson(parent) {
-  if(Array.isArray(parent)) {
-    return parent.map(item => flattenJson(item));
-  }
-  else if(!parent || [TYPE_VD, TYPE_GM, TYPE_CP].indexOf(parent.$$type) === -1 || !Array.isArray(parent.children)) {
-    return parent;
-  }
-  let list = [];
-  traverseJson(list, parent.children, {
-    lastText: null,
-  });
-  parent.children = list;
-  return parent;
-}
-
-function traverseJson(list, children, options) {
-  if(Array.isArray(children)) {
-    children.forEach(item => {
-      traverseJson(list, item, options);
-    });
-  }
-  else if(children && (children.$$type === TYPE_VD || children.$$type === TYPE_GM)) {
-    if(['canvas', 'svg'].indexOf(children.tagName) > -1) {
-      throw new Error('Can not nest canvas/svg');
-    }
-    if(children.$$type === TYPE_VD) {
-      flattenJson(children);
-    }
-    list.push(children);
-    options.lastText = null;
-  }
-  else if(children && children.$$type === TYPE_CP) {
-    list.push(children);
-    // 强制component即便返回text也形成一个独立的节点，合并在layout布局中做
-    options.lastText = null;
-  }
-  // 排除掉空的文本，连续的text合并
-  else if(!util.isNil(children) && children !== '') {
-    if(options.lastText !== null) {
-      list[list.length - 1] = options.lastText += children;
-    }
-    else {
-      list.push(children);
-    }
-  }
-}
-
-/**
  * 设置关系，父子和兄弟
  * @param parent
  * @param children
@@ -188,9 +145,17 @@ function relation(parent, children, options = {}) {
   else if(children instanceof Xom || children instanceof Component || children instanceof Text) {
     children.__parent = parent;
     children.__domParent = parent;
-    // 极为恶心，为了v8的性能优化，text复用parent的style部分，但domParent重设
+    // 极为恶心，为了v8的性能优化，text复用parent的__config部分，但domParent重设
     if(children instanceof Text) {
-      Object.assign(children.__config, parent.__config);
+      [
+        NODE_STYLE,
+        NODE_CURRENT_STYLE,
+        NODE_COMPUTED_STYLE,
+        NODE_MATRIX,
+        NODE_MATRIX_EVENT,
+      ].forEach(k => {
+        children.__config[k] = parent.__config[k];
+      });
     }
     if(children.__config) {
       children.__config[NODE_DOM_PARENT] = parent;
@@ -205,7 +170,15 @@ function relation(parent, children, options = {}) {
       let sr = children.shadowRoot;
       if(sr instanceof Text) {
         sr.__parent = parent;
-        Object.assign(sr.__config, parent.__config);
+        [
+          NODE_STYLE,
+          NODE_CURRENT_STYLE,
+          NODE_COMPUTED_STYLE,
+          NODE_MATRIX,
+          NODE_MATRIX_EVENT,
+        ].forEach(k => {
+          children.__config[k] = parent.__config[k];
+        });
       }
       sr.__domParent = parent;
       if(sr.__config) {
@@ -226,7 +199,5 @@ export default {
   },
   initRoot,
   initCp,
-  flattenJson,
   relation,
-  build,
 };
